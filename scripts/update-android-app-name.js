@@ -62,13 +62,21 @@ module.exports = function (context) {
     }
 
     var stringsCandidates = [
+        // Cordova-Android 14 (MABS 12) uses cdv_strings.xml
+        path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'values', 'cdv_strings.xml'),
+        // Older layout
         path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'values', 'strings.xml'),
         path.join(androidPlatformPath, 'res', 'values', 'strings.xml')
     ];
     console.log('[ChangeDisplayName] strings.xml candidates:', stringsCandidates.map(function(p) { return p + ' (' + (fs.existsSync(p) ? 'EXISTS' : 'missing') + ')'; }).join(', '));
 
-    // Use first existing, or default to the Cordova 12 expected path (create if needed)
-    var stringsPath = firstExistingPath(stringsCandidates) || stringsCandidates[0];
+    // Use first existing file — never create strings.xml from scratch (causes duplicate with cdv_strings.xml)
+    var stringsPath = firstExistingPath(stringsCandidates);
+
+    if (!stringsPath) {
+        // Neither file exists yet; default to cdv_strings.xml (Cordova 14 path)
+        stringsPath = stringsCandidates[0];
+    }
 
     console.log('[ChangeDisplayName] Using strings.xml:', stringsPath);
 
@@ -102,9 +110,9 @@ module.exports = function (context) {
                 fs.writeFileSync(stringsPath, builder.buildObject(data), 'UTF-8');
             });
         } else {
-            // File doesn't exist yet (MABS 12 — Gradle creates it later).
-            // Build the structure directly and write, Gradle will merge the rest.
-            console.log('[ChangeDisplayName] strings.xml not found — creating it at:', stringsPath);
+            // File doesn't exist yet. Create cdv_strings.xml (Cordova-Android 14 path).
+            // Do NOT create strings.xml — Cordova also generates it and Gradle would get duplicate app_name.
+            console.log('[ChangeDisplayName] strings file not found — creating it at:', stringsPath);
             var dir = path.dirname(stringsPath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
             var data = { resources: { string: [{ _: name, $: { name: 'app_name' } }] } };

@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 var fs = require('fs');
-var path = require("path");
+var path = require('path');
 var xml2js = require('xml2js');
+
 var parser = new xml2js.Parser();
-var semver = require('semver');
 var builder = new xml2js.Builder({
     xmldec: {
         version: '1.0',
@@ -13,55 +13,105 @@ var builder = new xml2js.Builder({
 });
 
 module.exports = function (context) {
-
-    if(context.opts.platforms.indexOf('android') === -1) return;
+    if (context.opts.platforms.indexOf('android') === -1) return;
 
     console.log('Attempting to set app name for android');
 
     var projectRoot = context.opts.projectRoot;
+    var androidPlatformPath = path.join(projectRoot, 'platforms', 'android');
 
-    const usesNewStructure = fs.existsSync(path.join(projectRoot, 'platforms', 'android', 'app'));
-    const basePath = usesNewStructure ? path.join(projectRoot, 'platforms', 'android', 'app', 'src', 'main') : path.join(projectRoot, 'platforms', 'android');
-    var configPath = path.join(basePath, 'res', 'xml', 'config.xml');
-    var stringsPath = path.join(basePath, 'res', 'values', 'strings.xml');
-    var stringsXml, name;
-
-    // make sure the android config file exists
-    try {
-        fs.accessSync(configPath, fs.F_OK);
-    } catch(e) {
-        console.error(`Could not find android config.xml at ${configPath}`);
+    if (!fs.existsSync(androidPlatformPath)) {
+        console.warn('Android platform folder not found yet. Skipping app name update.');
         return;
     }
 
-    name = getConfigParser(context, configPath).getPreference('AppName');
+    var configPath = firstExistingPath([
+        path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'xml', 'config.xml'),
+        path.join(androidPlatformPath, 'res', 'xml', 'config.xml'),
+        path.join(projectRoot, 'config.xml')
+    ]);
 
-    if (name) {
-        stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+    if (!configPath) {
+        console.warn('Could not find a config.xml file to read AppName preference. Skipping update.');
+        return;
+    }
+
+    var name = getPreferenceFromConfig(configPath, 'AppName');
+
+    if (!name) {
+        console.log('AppName preference not found in config. Skipping app name update.');
+        return;
+    }
+
+    var stringsPath = firstExistingPath([
+        path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'values', 'strings.xml'),
+        path.join(androidPlatformPath, 'res', 'values', 'strings.xml')
+    ]);
+
+    if (!stringsPath) {
+        console.warn('Could not find Android strings.xml. Skipping app name update.');
+        return;
+    }
+
+    try {
+        var stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+
         parser.parseString(stringsXml, function (err, data) {
+            if (err || !data || !data.resources || !Array.isArray(data.resources.string)) {
+                console.warn('Could not parse Android strings.xml. Skipping app name update.');
+                return;
+            }
 
-            data.resources.string.forEach(function (string) {
+            var updated = false;
 
-                if (string.$.name === 'app_name') {
-
-                    console.log('Setting App Name: ', name);
-                    string._ = name;
+            data.resources.string.forEach(function (stringNode) {
+                if (stringNode.$ && stringNode.$.name === 'app_name') {
+                    stringNode._ = name;
+                    updated = true;
                 }
             });
 
-            fs.writeFileSync(stringsPath, builder.buildObject(data));
+            if (!updated) {
+                data.resources.string.push({
+                    _: name,
+                    $: { name: 'app_name' }
+                });
+            }
 
+            console.log('Setting App Name:', name);
+            fs.writeFileSync(stringsPath, builder.buildObject(data), 'UTF-8');
         });
+    } catch (error) {
+        console.warn('Failed to update Android app name:', error && error.message ? error.message : error);
     }
 };
 
-function getConfigParser(context, config) {
-
-    if (semver.lt(context.opts.cordova.version, '5.4.0')) {
-        ConfigParser = context.requireCordovaModule('cordova-lib/src/ConfigParser/ConfigParser');
-    } else {
-        ConfigParser = context.requireCordovaModule('cordova-common/src/ConfigParser/ConfigParser');
+function firstExistingPath(candidates) {
+    for (var i = 0; i < candidates.length; i++) {
+        if (fs.existsSync(candidates[i])) {
+            return candidates[i];
+        }
     }
 
-    return new ConfigParser(config);
+    return null;
+}
+
+function getPreferenceFromConfig(configPath, preferenceName) {
+    try {
+        var configXml = fs.readFileSync(configPath, 'UTF-8');
+        var preferenceRegex = new RegExp("<preference\\s+name=['\\\"]" + escapeRegex(preferenceName) + "['\\\"]\\s+value=['\\\"]([^'\\\"]+)['\\\"]", 'i');
+        var match = configXml.match(preferenceRegex);
+
+        if (match && match[1]) {
+            return match[1];
+        }
+    } catch (error) {
+        console.warn('Failed to read config file for AppName preference:', error && error.message ? error.message : error);
+    }
+
+    return null;
+}
+
+function escapeRegex(value) {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

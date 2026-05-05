@@ -32,23 +32,26 @@ module.exports = function (context) {
     ];
     console.log('[ChangeDisplayName] config.xml candidates:', configCandidates.map(function(p) { return p + ' (' + (fs.existsSync(p) ? 'EXISTS' : 'missing') + ')'; }).join(', '));
 
-    var configPath = firstExistingPath(configCandidates);
-
-    if (!configPath) {
-        console.warn('[ChangeDisplayName] Could not find a config.xml file to read AppName preference. Skipping update.');
-        return;
+    // Search ALL existing config.xml files for AppName (ODC injects into root, Cordova propagates to platform)
+    var name = null;
+    for (var i = 0; i < configCandidates.length; i++) {
+        if (!fs.existsSync(configCandidates[i])) continue;
+        name = getPreferenceFromConfig(configCandidates[i], 'AppName') ||
+               getPreferenceFromConfig(configCandidates[i], 'APP_NAME');
+        if (name) {
+            console.log('[ChangeDisplayName] AppName found in:', configCandidates[i], '->', name);
+            break;
+        }
     }
-    console.log('[ChangeDisplayName] Using config.xml:', configPath);
-
-    var nameFromAppName   = getPreferenceFromConfig(configPath, 'AppName');
-    var nameFromAPP_NAME  = getPreferenceFromConfig(configPath, 'APP_NAME');
-    var nameFromWidget    = getWidgetNameFromConfig(configPath);
-    console.log('[ChangeDisplayName] AppName pref:', nameFromAppName, '| APP_NAME pref:', nameFromAPP_NAME, '| widget name:', nameFromWidget);
-
-    var name = nameFromAppName || nameFromAPP_NAME || nameFromWidget;
+    // Last resort: widget name from first existing config.xml
+    if (!name) {
+        var firstConfig = firstExistingPath(configCandidates);
+        if (firstConfig) name = getWidgetNameFromConfig(firstConfig);
+        console.log('[ChangeDisplayName] AppName fallback widget name:', name);
+    }
 
     if (!name) {
-        console.log('[ChangeDisplayName] AppName preference not found in config. Skipping app name update.');
+        console.log('[ChangeDisplayName] AppName not found in any config. Skipping app name update.');
         return;
     }
 
@@ -58,7 +61,8 @@ module.exports = function (context) {
     ];
     console.log('[ChangeDisplayName] strings.xml candidates:', stringsCandidates.map(function(p) { return p + ' (' + (fs.existsSync(p) ? 'EXISTS' : 'missing') + ')'; }).join(', '));
 
-    var stringsPath = firstExistingPath(stringsCandidates);
+    // Use first existing, or default to the Cordova 12 expected path (create if needed)
+    var stringsPath = firstExistingPath(stringsCandidates) || stringsCandidates[0];
 
     if (!stringsPath) {
         console.warn('[ChangeDisplayName] Could not find Android strings.xml. Skipping app name update.');
@@ -67,12 +71,27 @@ module.exports = function (context) {
     console.log('[ChangeDisplayName] Using strings.xml:', stringsPath);
 
     try {
-        var stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+        var stringsXml;
+
+        if (fs.existsSync(stringsPath)) {
+            stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+        } else {
+            // strings.xml doesn't exist yet (MABS 12 creates it later via Gradle).
+            // Create a minimal file now; Gradle will merge/overwrite remaining strings.
+            console.log('[ChangeDisplayName] strings.xml not found — creating it at:', stringsPath);
+            var dir = path.dirname(stringsPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            stringsXml = "<?xml version='1.0' encoding='utf-8'?>\n<resources>\n</resources>";
+        }
 
         parser.parseString(stringsXml, function (err, data) {
-            if (err || !data || !data.resources || !Array.isArray(data.resources.string)) {
-                console.warn('Could not parse Android strings.xml. Skipping app name update.');
+            if (err || !data || !data.resources) {
+                console.warn('[ChangeDisplayName] Could not parse Android strings.xml. Skipping app name update.');
                 return;
+            }
+
+            if (!Array.isArray(data.resources.string)) {
+                data.resources.string = [];
             }
 
             var updated = false;
@@ -91,11 +110,11 @@ module.exports = function (context) {
                 });
             }
 
-            console.log('Setting App Name:', name);
+            console.log('[ChangeDisplayName] Setting App Name:', name);
             fs.writeFileSync(stringsPath, builder.buildObject(data), 'UTF-8');
         });
     } catch (error) {
-        console.warn('Failed to update Android app name:', error && error.message ? error.message : error);
+        console.warn('[ChangeDisplayName] Failed to update Android app name:', error && error.message ? error.message : error);
     }
 };
 

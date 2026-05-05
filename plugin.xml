@@ -11,8 +11,8 @@
         <engine name="cordova" version=">=3.0.0"/>
     </engines>
 
-    <preference name="APP_NAME"/>
-    
+    <preference name="APP_NAME" default=""/>
+
     <!--<hook type="before_compile" src="scripts/before-compile.js"/>-->
     <hook type="before_plugin_install" src="scripts/npmInstall.js"/>
 

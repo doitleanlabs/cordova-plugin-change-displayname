@@ -36,7 +36,10 @@ module.exports = function (context) {
         return;
     }
 
-    var name = getPreferenceFromConfig(configPath, 'AppName');
+    var name =
+        getPreferenceFromConfig(configPath, 'AppName') ||
+        getPreferenceFromConfig(configPath, 'APP_NAME') ||
+        getWidgetNameFromConfig(configPath);
 
     if (!name) {
         console.log('AppName preference not found in config. Skipping app name update.');
@@ -99,17 +102,41 @@ function firstExistingPath(candidates) {
 function getPreferenceFromConfig(configPath, preferenceName) {
     try {
         var configXml = fs.readFileSync(configPath, 'UTF-8');
-        var preferenceRegex = new RegExp("<preference\\s+name=['\\\"]" + escapeRegex(preferenceName) + "['\\\"]\\s+value=['\\\"]([^'\\\"]+)['\\\"]", 'i');
+        var preferenceRegex = new RegExp("<preference\\s+name=['\\\"]" + escapeRegex(preferenceName) + "['\\\"]\\s+value=['\\\"]([^'\\\"]*)['\\\"]", 'i');
         var match = configXml.match(preferenceRegex);
 
-        if (match && match[1]) {
-            return match[1];
+        if (match && typeof match[1] === 'string') {
+            return normalizePreferenceValue(match[1]);
         }
     } catch (error) {
         console.warn('Failed to read config file for AppName preference:', error && error.message ? error.message : error);
     }
 
     return null;
+}
+
+function getWidgetNameFromConfig(configPath) {
+    try {
+        var configXml = fs.readFileSync(configPath, 'UTF-8');
+        var nameMatch = configXml.match(/<name>([^<]+)<\/name>/i);
+
+        if (nameMatch && typeof nameMatch[1] === 'string') {
+            return normalizePreferenceValue(nameMatch[1]);
+        }
+    } catch (error) {
+        console.warn('Failed to read config file widget name:', error && error.message ? error.message : error);
+    }
+
+    return null;
+}
+
+function normalizePreferenceValue(value) {
+    var normalized = String(value).trim();
+
+    if (!normalized) return null;
+    if (/^\$[A-Z0-9_]+$/i.test(normalized)) return null;
+
+    return normalized;
 }
 
 function escapeRegex(value) {

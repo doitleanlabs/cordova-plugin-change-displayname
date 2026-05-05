@@ -25,36 +25,46 @@ module.exports = function (context) {
         return;
     }
 
-    var configPath = firstExistingPath([
+    var configCandidates = [
         path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'xml', 'config.xml'),
         path.join(androidPlatformPath, 'res', 'xml', 'config.xml'),
         path.join(projectRoot, 'config.xml')
-    ]);
+    ];
+    console.log('[ChangeDisplayName] config.xml candidates:', configCandidates.map(function(p) { return p + ' (' + (fs.existsSync(p) ? 'EXISTS' : 'missing') + ')'; }).join(', '));
+
+    var configPath = firstExistingPath(configCandidates);
 
     if (!configPath) {
-        console.warn('Could not find a config.xml file to read AppName preference. Skipping update.');
+        console.warn('[ChangeDisplayName] Could not find a config.xml file to read AppName preference. Skipping update.');
         return;
     }
+    console.log('[ChangeDisplayName] Using config.xml:', configPath);
 
-    var name =
-        getPreferenceFromConfig(configPath, 'AppName') ||
-        getPreferenceFromConfig(configPath, 'APP_NAME') ||
-        getWidgetNameFromConfig(configPath);
+    var nameFromAppName   = getPreferenceFromConfig(configPath, 'AppName');
+    var nameFromAPP_NAME  = getPreferenceFromConfig(configPath, 'APP_NAME');
+    var nameFromWidget    = getWidgetNameFromConfig(configPath);
+    console.log('[ChangeDisplayName] AppName pref:', nameFromAppName, '| APP_NAME pref:', nameFromAPP_NAME, '| widget name:', nameFromWidget);
+
+    var name = nameFromAppName || nameFromAPP_NAME || nameFromWidget;
 
     if (!name) {
-        console.log('AppName preference not found in config. Skipping app name update.');
+        console.log('[ChangeDisplayName] AppName preference not found in config. Skipping app name update.');
         return;
     }
 
-    var stringsPath = firstExistingPath([
+    var stringsCandidates = [
         path.join(androidPlatformPath, 'app', 'src', 'main', 'res', 'values', 'strings.xml'),
         path.join(androidPlatformPath, 'res', 'values', 'strings.xml')
-    ]);
+    ];
+    console.log('[ChangeDisplayName] strings.xml candidates:', stringsCandidates.map(function(p) { return p + ' (' + (fs.existsSync(p) ? 'EXISTS' : 'missing') + ')'; }).join(', '));
+
+    var stringsPath = firstExistingPath(stringsCandidates);
 
     if (!stringsPath) {
-        console.warn('Could not find Android strings.xml. Skipping app name update.');
+        console.warn('[ChangeDisplayName] Could not find Android strings.xml. Skipping app name update.');
         return;
     }
+    console.log('[ChangeDisplayName] Using strings.xml:', stringsPath);
 
     try {
         var stringsXml = fs.readFileSync(stringsPath, 'UTF-8');

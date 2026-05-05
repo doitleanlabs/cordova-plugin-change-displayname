@@ -36,6 +36,12 @@ module.exports = function (context) {
     var name = null;
     for (var i = 0; i < configCandidates.length; i++) {
         if (!fs.existsSync(configCandidates[i])) continue;
+        // Log relevant lines so we can see exactly what's in the file
+        try {
+            var configContent = fs.readFileSync(configCandidates[i], 'UTF-8');
+            var prefLines = configContent.split('\n').filter(function(l) { return /AppName|APP_NAME|widget|name=/i.test(l); }).slice(0, 5);
+            console.log('[ChangeDisplayName] Relevant lines in', configCandidates[i] + ':', prefLines.join(' | '));
+        } catch(e) { /* ignore */ }
         name = getPreferenceFromConfig(configCandidates[i], 'AppName') ||
                getPreferenceFromConfig(configCandidates[i], 'APP_NAME');
         if (name) {
@@ -64,55 +70,47 @@ module.exports = function (context) {
     // Use first existing, or default to the Cordova 12 expected path (create if needed)
     var stringsPath = firstExistingPath(stringsCandidates) || stringsCandidates[0];
 
-    if (!stringsPath) {
-        console.warn('[ChangeDisplayName] Could not find Android strings.xml. Skipping app name update.');
-        return;
-    }
     console.log('[ChangeDisplayName] Using strings.xml:', stringsPath);
 
     try {
-        var stringsXml;
-
         if (fs.existsSync(stringsPath)) {
-            stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+            // File exists: parse, update app_name, write back
+            var stringsXml = fs.readFileSync(stringsPath, 'UTF-8');
+            parser.parseString(stringsXml, function (err, data) {
+                if (err || !data || !data.resources) {
+                    console.warn('[ChangeDisplayName] Could not parse Android strings.xml:', err && err.message);
+                    return;
+                }
+
+                if (!Array.isArray(data.resources.string)) {
+                    data.resources.string = [];
+                }
+
+                var updated = false;
+                data.resources.string.forEach(function (stringNode) {
+                    if (stringNode.$ && stringNode.$.name === 'app_name') {
+                        stringNode._ = name;
+                        updated = true;
+                    }
+                });
+
+                if (!updated) {
+                    data.resources.string.push({ _: name, $: { name: 'app_name' } });
+                }
+
+                console.log('[ChangeDisplayName] Setting App Name:', name);
+                fs.writeFileSync(stringsPath, builder.buildObject(data), 'UTF-8');
+            });
         } else {
-            // strings.xml doesn't exist yet (MABS 12 creates it later via Gradle).
-            // Create a minimal file now; Gradle will merge/overwrite remaining strings.
+            // File doesn't exist yet (MABS 12 — Gradle creates it later).
+            // Build the structure directly and write, Gradle will merge the rest.
             console.log('[ChangeDisplayName] strings.xml not found — creating it at:', stringsPath);
             var dir = path.dirname(stringsPath);
             if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-            stringsXml = "<?xml version='1.0' encoding='utf-8'?>\n<resources>\n</resources>";
-        }
-
-        parser.parseString(stringsXml, function (err, data) {
-            if (err || !data || !data.resources) {
-                console.warn('[ChangeDisplayName] Could not parse Android strings.xml. Skipping app name update.');
-                return;
-            }
-
-            if (!Array.isArray(data.resources.string)) {
-                data.resources.string = [];
-            }
-
-            var updated = false;
-
-            data.resources.string.forEach(function (stringNode) {
-                if (stringNode.$ && stringNode.$.name === 'app_name') {
-                    stringNode._ = name;
-                    updated = true;
-                }
-            });
-
-            if (!updated) {
-                data.resources.string.push({
-                    _: name,
-                    $: { name: 'app_name' }
-                });
-            }
-
+            var data = { resources: { string: [{ _: name, $: { name: 'app_name' } }] } };
             console.log('[ChangeDisplayName] Setting App Name:', name);
             fs.writeFileSync(stringsPath, builder.buildObject(data), 'UTF-8');
-        });
+        }
     } catch (error) {
         console.warn('[ChangeDisplayName] Failed to update Android app name:', error && error.message ? error.message : error);
     }
